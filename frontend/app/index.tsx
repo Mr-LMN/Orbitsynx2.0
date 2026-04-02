@@ -7,14 +7,13 @@ import {
   Text, 
   TouchableOpacity, 
   Modal, 
-  Dimensions,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+import Svg, { Line, Circle, G } from 'react-native-svg';
 
 // ============================================
 // GAME CONSTANTS - Tuned for MAXIMUM DOPAMINE
@@ -22,6 +21,26 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const DIAMOND_SIZE_RATIO = 0.28;
 const BASE_SPEED = 0.00028;
 const WAVE_DURATION = 18000;
+const GRID_SPACING = 52;
+
+// TRON Color Palette
+const C = {
+  void: '#000000',
+  bg: '#020206',
+  cyan: '#00FFFF',
+  cyanBright: '#00E5FF',
+  cyanDim: 'rgba(0, 255, 255, 0.15)',
+  cyanFaint: 'rgba(0, 255, 255, 0.06)',
+  magenta: '#FF00FF',
+  magentaDim: 'rgba(255, 0, 255, 0.15)',
+  gold: '#FFD700',
+  white: '#FFFFFF',
+  red: '#FF4444',
+  gridLine: 'rgba(0, 255, 255, 0.03)',
+  textMuted: '#445566',
+  hudBg: 'rgba(0, 255, 255, 0.04)',
+  hudBorder: 'rgba(0, 255, 255, 0.12)',
+};
 
 const TARGET_TYPES = {
   STANDARD: 'standard',
@@ -73,7 +92,6 @@ function getTrackPosition(progress: number, centerX: number, centerY: number, si
 // MAIN GAME COMPONENT
 // ============================================
 export default function OrbitSyncGame() {
-  // Use useWindowDimensions hook for proper dimension updates on web
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   
   const [gameState, setGameState] = useState(GameState.MENU);
@@ -114,19 +132,22 @@ export default function OrbitSyncGame() {
     { x: centerX - diamondSize, y: centerY }
   ], [centerX, centerY, diamondSize]);
 
-  // Generate track segments for rendering - FEWER, BIGGER
-  const trackSegments = useMemo(() => {
-    const segments: { x: number; y: number }[] = [];
-    const totalPoints = 48; // Much fewer dots
-    
-    for (let i = 0; i < totalPoints; i++) {
-      const progress = i / totalPoints;
-      const pos = getTrackPosition(progress, centerX, centerY, diamondSize);
-      segments.push({ x: pos.x, y: pos.y });
-    }
-    
-    return segments;
-  }, [centerX, centerY, diamondSize]);
+  // Diamond edges for SVG line rendering
+  const edges = useMemo(() => {
+    return vertices.map((start, i) => ({
+      start,
+      end: vertices[(i + 1) % 4],
+    }));
+  }, [vertices]);
+
+  // Grid lines for Tron background
+  const gridLines = useMemo(() => {
+    const hLines: number[] = [];
+    const vLines: number[] = [];
+    for (let y = 0; y <= screenHeight; y += GRID_SPACING) hLines.push(y);
+    for (let x = 0; x <= screenWidth; x += GRID_SPACING) vLines.push(x);
+    return { hLines, vLines };
+  }, [screenWidth, screenHeight]);
 
   const getSpawnInterval = useCallback(() => {
     switch (currentWave) {
@@ -175,7 +196,7 @@ export default function OrbitSyncGame() {
         }
         break;
       
-      case 2:
+      case 2: {
         const rand2 = Math.random();
         if (rand2 < 0.18) {
           const cornerProgress = Math.round(aheadProgress * 4) / 4;
@@ -186,8 +207,9 @@ export default function OrbitSyncGame() {
           spawnTarget(TARGET_TYPES.STANDARD, aheadProgress);
         }
         break;
+      }
       
-      case 3:
+      case 3: {
         const rand3 = Math.random();
         if (rand3 < 0.14) {
           spawnTarget(TARGET_TYPES.FRACTURE, aheadProgress);
@@ -200,8 +222,9 @@ export default function OrbitSyncGame() {
           spawnTarget(TARGET_TYPES.STANDARD, aheadProgress);
         }
         break;
+      }
       
-      case 4:
+      case 4: {
         const rand4 = Math.random();
         if (rand4 < 0.12) {
           spawnTarget(TARGET_TYPES.FRACTURE, aheadProgress);
@@ -217,6 +240,7 @@ export default function OrbitSyncGame() {
           spawnTarget(TARGET_TYPES.STANDARD, aheadProgress);
         }
         break;
+      }
     }
   }, [spawnTarget]);
 
@@ -229,7 +253,7 @@ export default function OrbitSyncGame() {
   }, []);
 
   const createFlash = useCallback((type: 'perfect' | 'miss') => {
-    setFlashColor(type === 'perfect' ? 'rgba(0, 255, 255, 0.35)' : 'rgba(255, 0, 0, 0.5)');
+    setFlashColor(type === 'perfect' ? 'rgba(0, 255, 255, 0.25)' : 'rgba(255, 0, 0, 0.4)');
     setTimeout(() => setFlashColor(null), 100);
   }, []);
 
@@ -420,164 +444,318 @@ export default function OrbitSyncGame() {
 
   const perfectPercent = totalHits > 0 ? Math.floor((perfectHits / totalHits) * 100) : 100;
   const playerPos = getTrackPosition(playerProgress, centerX, centerY, diamondSize);
+  const pulseVal = Math.sin(tick * 0.12) * 0.5 + 0.5;
 
+  // ============================================
+  // RENDER TARGET
+  // ============================================
   const renderTarget = (target: Target) => {
     const pos = getTrackPosition(target.progress, centerX, centerY, diamondSize);
-    const pulseScale = 1 + Math.sin(tick * 0.15) * 0.08;
+    const pulse = 1 + Math.sin(tick * 0.15) * 0.06;
+    const webGlow = Platform.OS === 'web';
     
     switch (target.type) {
       case TARGET_TYPES.STANDARD:
         return (
-          <View key={target.id} style={[styles.targetBase, { left: pos.x - 26, top: pos.y - 26, width: 52, height: 52 }]}>
-            <View style={[styles.standardOuter, { transform: [{ scale: pulseScale }] }]}>
-              <View style={styles.standardInner} />
+          <View key={target.id} style={{ position: 'absolute', left: pos.x - 28, top: pos.y - 28, width: 56, height: 56, justifyContent: 'center', alignItems: 'center' }}>
+            {/* Glow */}
+            <View style={{
+              position: 'absolute', width: 56, height: 56, borderRadius: 28,
+              backgroundColor: 'rgba(0, 255, 255, 0.1)',
+            }} />
+            {/* Ring */}
+            <View style={[{
+              width: 44 * pulse, height: 44 * pulse, borderRadius: 22 * pulse,
+              borderWidth: 2.5, borderColor: C.cyan,
+              backgroundColor: 'rgba(0, 255, 255, 0.06)',
+              justifyContent: 'center', alignItems: 'center',
+            }, webGlow ? { boxShadow: '0 0 12px rgba(0,255,255,0.4), inset 0 0 8px rgba(0,255,255,0.15)' } as any : {}]}>
+              {/* Core dot */}
+              <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: C.white }} />
             </View>
           </View>
         );
       
       case TARGET_TYPES.CORNER_LOCK:
         return (
-          <View key={target.id} style={[styles.targetBase, { left: pos.x - 28, top: pos.y - 28, width: 56, height: 56 }]}>
-            <View style={[styles.cornerOuter, { transform: [{ scale: pulseScale }] }]}>
-              <View style={styles.cornerInnerDot} />
+          <View key={target.id} style={{ position: 'absolute', left: pos.x - 30, top: pos.y - 30, width: 60, height: 60, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ position: 'absolute', width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(0, 255, 255, 0.08)' }} />
+            <View style={[{
+              width: 46 * pulse, height: 46 * pulse, borderRadius: 8,
+              borderWidth: 2.5, borderColor: C.cyan,
+              transform: [{ rotate: '45deg' }],
+              backgroundColor: 'rgba(0, 255, 255, 0.05)',
+              justifyContent: 'center', alignItems: 'center',
+            }, webGlow ? { boxShadow: '0 0 14px rgba(0,255,255,0.4)' } as any : {}]}>
+              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: C.white, transform: [{ rotate: '-45deg' }] }} />
             </View>
           </View>
         );
       
       case TARGET_TYPES.DUAL:
         return (
-          <View key={target.id} style={[styles.targetBase, { left: pos.x - 26, top: pos.y - 26, width: 52, height: 52 }]}>
-            <View style={[styles.dualOuter, { transform: [{ scale: pulseScale }] }]}>
-              <View style={styles.dualLeft} />
-              <View style={styles.dualRight} />
-              <View style={styles.dualSeam} />
-              <View style={styles.dualCenter} />
+          <View key={target.id} style={{ position: 'absolute', left: pos.x - 28, top: pos.y - 28, width: 56, height: 56, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ position: 'absolute', width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255, 0, 255, 0.06)' }} />
+            <View style={[{
+              width: 44 * pulse, height: 44 * pulse, borderRadius: 22 * pulse,
+              overflow: 'hidden', flexDirection: 'row',
+              borderWidth: 2.5, borderColor: C.white,
+            }, webGlow ? { boxShadow: '0 0 12px rgba(255,0,255,0.3), 0 0 12px rgba(0,255,255,0.3)' } as any : {}]}>
+              <View style={{ flex: 1, backgroundColor: 'rgba(0, 255, 255, 0.7)' }} />
+              <View style={{ flex: 1, backgroundColor: 'rgba(255, 0, 255, 0.7)' }} />
             </View>
+            <View style={{ position: 'absolute', width: 12, height: 12, borderRadius: 6, backgroundColor: C.white }} />
           </View>
         );
       
       case TARGET_TYPES.FRACTURE:
         return (
-          <View key={target.id} style={[styles.targetBase, { left: pos.x - 28, top: pos.y - 28, width: 56, height: 56 }]}>
-            <View style={[styles.fractureOuter, { transform: [{ scale: pulseScale }] }]}>
-              <View style={styles.fractureCrack1} />
-              <View style={styles.fractureCrack2} />
+          <View key={target.id} style={{ position: 'absolute', left: pos.x - 30, top: pos.y - 30, width: 60, height: 60, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ position: 'absolute', width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255, 215, 0, 0.08)' }} />
+            <View style={[{
+              width: 40 * pulse, height: 40 * pulse,
+              transform: [{ rotate: '45deg' }],
+              borderRadius: 4,
+              borderWidth: 2.5, borderColor: C.gold,
+              backgroundColor: 'rgba(255, 215, 0, 0.12)',
+              justifyContent: 'center', alignItems: 'center',
+            }, webGlow ? { boxShadow: '0 0 16px rgba(255,215,0,0.5)' } as any : {}]}>
+              {/* Crack lines */}
+              <View style={{ position: 'absolute', width: 2, height: 30, backgroundColor: C.gold, opacity: 0.6, transform: [{ rotate: '-45deg' }] }} />
+              <View style={{ position: 'absolute', width: 30, height: 2, backgroundColor: C.gold, opacity: 0.6, transform: [{ rotate: '-45deg' }] }} />
             </View>
           </View>
         );
       
-      case TARGET_TYPES.SHARD:
-        const size = 22 * (target.size || 1);
+      case TARGET_TYPES.SHARD: {
+        const sz = 24 * (target.size || 1);
         return (
-          <View key={target.id} style={[styles.targetBase, { left: pos.x - size/2, top: pos.y - size/2, width: size, height: size }]}>
-            <View style={[styles.shardOuter, { width: size - 4, height: size - 4, transform: [{ scale: pulseScale }] }]} />
+          <View key={target.id} style={{ position: 'absolute', left: pos.x - sz / 2, top: pos.y - sz / 2, width: sz, height: sz, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={[{
+              width: sz * 0.75, height: sz * 0.75,
+              transform: [{ rotate: '45deg' }, { scale: pulse }],
+              borderRadius: 2,
+              borderWidth: 2, borderColor: C.gold,
+              backgroundColor: 'rgba(255, 215, 0, 0.2)',
+            }, webGlow ? { boxShadow: '0 0 8px rgba(255,215,0,0.4)' } as any : {}]} />
           </View>
         );
+      }
       
       default:
         return null;
     }
   };
 
+  // ============================================
+  // RENDER
+  // ============================================
   return (
     <GestureHandlerRootView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
       <SafeAreaView style={styles.container}>
         <GestureDetector gesture={tapGesture}>
           <View style={styles.gameArea}>
-            {/* Animated background particles */}
-            {Array.from({ length: 40 }).map((_, i) => {
-              const xPos = ((i * 37 + tick * 0.01) % screenWidth);
-              const yPos = ((i * 53 + tick * 0.06) % screenHeight);
+
+            {/* ===== TRON GRID BACKGROUND ===== */}
+            {gridLines.hLines.map((y, i) => (
+              <View key={`hg-${i}`} style={{
+                position: 'absolute', left: 0, right: 0, top: y,
+                height: StyleSheet.hairlineWidth,
+                backgroundColor: C.gridLine,
+              }} />
+            ))}
+            {gridLines.vLines.map((x, i) => (
+              <View key={`vg-${i}`} style={{
+                position: 'absolute', top: 0, bottom: 0, left: x,
+                width: StyleSheet.hairlineWidth,
+                backgroundColor: C.gridLine,
+              }} />
+            ))}
+
+            {/* ===== AMBIENT PARTICLES ===== */}
+            {Array.from({ length: 25 }).map((_, i) => {
+              const xPos = ((i * 41 + tick * 0.006) % screenWidth);
+              const yPos = ((i * 59 + tick * 0.025) % screenHeight);
+              const sz = 1 + (i % 3);
               return (
-                <View
-                  key={`bg-${i}`}
-                  style={[
-                    styles.bgParticle,
-                    {
-                      left: xPos,
-                      top: yPos,
-                      width: (i % 3) + 2,
-                      height: (i % 3) + 2,
-                      opacity: 0.12 + (i % 5) * 0.06,
-                    }
-                  ]}
-                />
+                <View key={`p-${i}`} style={{
+                  position: 'absolute', left: xPos, top: yPos,
+                  width: sz, height: sz, borderRadius: sz / 2,
+                  backgroundColor: C.cyan,
+                  opacity: 0.05 + (i % 5) * 0.02,
+                }} />
               );
             })}
 
-            {/* Boss silhouette */}
+            {/* ===== RADIAL AMBIENT GLOW ===== */}
+            <View style={{
+              position: 'absolute',
+              width: diamondSize * 3.2, height: diamondSize * 3.2,
+              borderRadius: diamondSize * 1.6,
+              left: centerX - diamondSize * 1.6,
+              top: centerY - diamondSize * 1.6,
+              backgroundColor: 'rgba(0, 255, 255, 0.012)',
+            }} />
+
+            {/* ===== BOSS SILHOUETTE ===== */}
             {currentWave === 4 && gameState === GameState.PLAYING && (
-              <View style={styles.bossContainer}>
-                <View style={styles.bossCrystal} />
+              <View style={{ position: 'absolute', top: screenHeight * 0.08, left: 0, right: 0, alignItems: 'center', opacity: 0.06 + pulseVal * 0.04 }}>
+                <View style={{
+                  width: 70, height: 100,
+                  borderWidth: 2, borderColor: C.magenta,
+                  transform: [{ rotate: '45deg' }],
+                  borderRadius: 6,
+                }} />
               </View>
             )}
 
-            {/* DIAMOND TRACK - Glow layer */}
-            {trackSegments.map((point, i) => (
-              <View
-                key={`glow-${i}`}
-                style={[
-                  styles.trackGlow,
-                  { left: point.x - 16, top: point.y - 16 }
-                ]}
-              />
-            ))}
+            {/* ===== DIAMOND TRACK (SVG) ===== */}
+            <Svg
+              width={screenWidth}
+              height={screenHeight}
+              style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}
+            >
+              {/* Track edge glow layers */}
+              {edges.map((e, i) => (
+                <G key={`edge-${i}`}>
+                  {/* Widest outer glow */}
+                  <Line
+                    x1={e.start.x} y1={e.start.y}
+                    x2={e.end.x} y2={e.end.y}
+                    stroke="rgba(0, 255, 255, 0.03)"
+                    strokeWidth={48}
+                    strokeLinecap="round"
+                  />
+                  {/* Outer glow */}
+                  <Line
+                    x1={e.start.x} y1={e.start.y}
+                    x2={e.end.x} y2={e.end.y}
+                    stroke="rgba(0, 255, 255, 0.06)"
+                    strokeWidth={24}
+                    strokeLinecap="round"
+                  />
+                  {/* Inner glow */}
+                  <Line
+                    x1={e.start.x} y1={e.start.y}
+                    x2={e.end.x} y2={e.end.y}
+                    stroke="rgba(0, 255, 255, 0.14)"
+                    strokeWidth={10}
+                    strokeLinecap="round"
+                  />
+                  {/* Core line */}
+                  <Line
+                    x1={e.start.x} y1={e.start.y}
+                    x2={e.end.x} y2={e.end.y}
+                    stroke="#00E5FF"
+                    strokeWidth={2.5}
+                    strokeLinecap="round"
+                  />
+                  {/* Bright center highlight */}
+                  <Line
+                    x1={e.start.x} y1={e.start.y}
+                    x2={e.end.x} y2={e.end.y}
+                    stroke="rgba(255, 255, 255, 0.35)"
+                    strokeWidth={1}
+                    strokeLinecap="round"
+                  />
+                </G>
+              ))}
 
-            {/* DIAMOND TRACK - Main dots */}
-            {trackSegments.map((point, i) => (
-              <View
-                key={`dot-${i}`}
-                style={[
-                  styles.trackMain,
-                  { left: point.x - 8, top: point.y - 8 }
-                ]}
-              />
-            ))}
+              {/* Corner nodes */}
+              {vertices.map((v, i) => (
+                <G key={`cn-${i}`}>
+                  <Circle cx={v.x} cy={v.y} r={18} fill="rgba(0, 255, 255, 0.06)" />
+                  <Circle cx={v.x} cy={v.y} r={10} fill="rgba(0, 255, 255, 0.18)" />
+                  <Circle cx={v.x} cy={v.y} r={5} fill="#00E5FF" />
+                  <Circle cx={v.x} cy={v.y} r={2.5} fill="#FFFFFF" />
+                </G>
+              ))}
+            </Svg>
 
-            {/* Corner nodes with glow */}
-            {vertices.map((v, i) => (
-              <React.Fragment key={`corner-${i}`}>
-                <View style={[styles.cornerGlow, { left: v.x - 18, top: v.y - 18 }]} />
-                <View style={[styles.cornerNode, { left: v.x - 14, top: v.y - 14 }]}>
-                  <View style={styles.cornerDot} />
-                </View>
-              </React.Fragment>
-            ))}
+            {/* ===== PLAYER TRAIL ===== */}
+            {gameState === GameState.PLAYING && [0.012, 0.026, 0.042, 0.06].map((offset, i) => {
+              const trailProg = (playerProgress - offset + 1) % 1;
+              const trailPos = getTrackPosition(trailProg, centerX, centerY, diamondSize);
+              const sz = 8 - i * 1.5;
+              const op = 0.35 - i * 0.08;
+              return (
+                <View key={`trail-${i}`} style={{
+                  position: 'absolute',
+                  width: sz, height: sz, borderRadius: sz / 2,
+                  left: trailPos.x - sz / 2, top: trailPos.y - sz / 2,
+                  backgroundColor: C.cyan, opacity: Math.max(op, 0.04),
+                }} />
+              );
+            })}
 
-            {/* Targets */}
-            {gameState === GameState.PLAYING && targets.map(renderTarget)}
-
-            {/* Player Orb with glow */}
+            {/* ===== PLAYER ORB ===== */}
             {gameState === GameState.PLAYING && (
               <>
-                <View style={[styles.playerGlowOuter, { left: playerPos.x - 28, top: playerPos.y - 28 }]} />
-                <View style={[styles.playerGlowInner, { left: playerPos.x - 22, top: playerPos.y - 22 }]} />
-                <View style={[styles.playerCore, { left: playerPos.x - 14, top: playerPos.y - 14 }]} />
+                {/* Outer pulse */}
+                <View style={[{
+                  position: 'absolute',
+                  width: 52, height: 52, borderRadius: 26,
+                  left: playerPos.x - 26, top: playerPos.y - 26,
+                  backgroundColor: 'rgba(0, 255, 255, 0.07)',
+                }, Platform.OS === 'web' ? { boxShadow: '0 0 30px rgba(0,255,255,0.15)' } as any : {}]} />
+                {/* Mid glow */}
+                <View style={{
+                  position: 'absolute',
+                  width: 34, height: 34, borderRadius: 17,
+                  left: playerPos.x - 17, top: playerPos.y - 17,
+                  backgroundColor: 'rgba(0, 255, 255, 0.2)',
+                }} />
+                {/* Inner glow */}
+                <View style={{
+                  position: 'absolute',
+                  width: 22, height: 22, borderRadius: 11,
+                  left: playerPos.x - 11, top: playerPos.y - 11,
+                  backgroundColor: 'rgba(0, 255, 255, 0.45)',
+                }} />
+                {/* Core */}
+                <View style={[{
+                  position: 'absolute',
+                  width: 14, height: 14, borderRadius: 7,
+                  left: playerPos.x - 7, top: playerPos.y - 7,
+                  backgroundColor: C.white,
+                }, Platform.OS === 'web' ? { boxShadow: '0 0 10px rgba(255,255,255,0.6), 0 0 20px rgba(0,255,255,0.4)' } as any : {}]} />
               </>
             )}
 
-            {/* Hit Effects */}
+            {/* ===== TARGETS ===== */}
+            {gameState === GameState.PLAYING && targets.map(renderTarget)}
+
+            {/* ===== HIT EFFECTS ===== */}
             {hitEffects.map(effect => (
-              <View 
-                key={effect.id}
-                style={[
-                  styles.hitRing,
-                  { 
-                    left: effect.x - 50, 
-                    top: effect.y - 50,
-                    borderColor: effect.type === 'perfect' ? '#0ff' : '#f44',
-                  }
-                ]}
-              />
+              <React.Fragment key={effect.id}>
+                {/* Outer ring */}
+                <View style={{
+                  position: 'absolute',
+                  width: 90, height: 90, borderRadius: 45,
+                  left: effect.x - 45, top: effect.y - 45,
+                  borderWidth: 2.5,
+                  borderColor: effect.type === 'perfect' ? 'rgba(0,255,255,0.5)' : 'rgba(255,68,68,0.5)',
+                  backgroundColor: effect.type === 'perfect' ? 'rgba(0,255,255,0.04)' : 'rgba(255,68,68,0.04)',
+                }} />
+                {/* Inner ring */}
+                <View style={{
+                  position: 'absolute',
+                  width: 50, height: 50, borderRadius: 25,
+                  left: effect.x - 25, top: effect.y - 25,
+                  borderWidth: 1.5,
+                  borderColor: effect.type === 'perfect' ? 'rgba(0,255,255,0.7)' : 'rgba(255,68,68,0.7)',
+                }} />
+              </React.Fragment>
             ))}
 
-            {/* Flash overlay */}
+            {/* ===== FLASH OVERLAY ===== */}
             {flashColor && <View style={[styles.flash, { backgroundColor: flashColor }]} />}
 
-            {/* HUD */}
+            {/* ===== HUD ===== */}
             {gameState === GameState.PLAYING && (
               <>
+                {/* Top HUD Bar */}
                 <View style={styles.topHUD}>
                   <View style={styles.hudCol}>
                     <Text style={styles.labelGold}>COINS</Text>
@@ -587,7 +765,7 @@ export default function OrbitSyncGame() {
                     <Text style={styles.labelCyan}>LIVES</Text>
                     <View style={styles.livesRow}>
                       {[0, 1, 2].map(i => (
-                        <Text key={i} style={[styles.heart, { color: i < lives ? '#0ff' : '#333' }]}>{'\u2665'}</Text>
+                        <Text key={i} style={{ fontSize: 20, color: i < lives ? C.cyan : '#1a1a2e', textShadowColor: i < lives ? 'rgba(0,255,255,0.5)' : 'transparent', textShadowRadius: 6, textShadowOffset: { width: 0, height: 0 } }}>{"\u2665"}</Text>
                       ))}
                     </View>
                   </View>
@@ -597,95 +775,110 @@ export default function OrbitSyncGame() {
                   </View>
                 </View>
 
+                {/* Wave / Boss Bar */}
                 <View style={styles.waveBar}>
                   {currentWave === 4 ? (
                     <>
-                      <Text style={styles.bossName}>AETHELRED, PRISM WARDEN</Text>
-                      <View style={styles.hpBar}>
+                      <Text style={styles.bossName}>{"\u25C6"} GRID SENTINEL {"\u25C6"}</Text>
+                      <View style={styles.hpBarOuter}>
                         <View style={[styles.hpFill, { width: `${bossHP}%` }]} />
+                        <View style={styles.hpShine} />
                       </View>
-                      <Text style={styles.bossPhase}>BOSS PHASE</Text>
+                      <Text style={styles.bossPhase}>BOSS BATTLE</Text>
                     </>
                   ) : (
                     <Text style={styles.waveText}>WAVE {currentWave} / 4</Text>
                   )}
                 </View>
 
+                {/* Center Score Display */}
                 <View style={styles.scoreBox}>
                   <Text style={styles.scoreLabel}>SCORE</Text>
                   <Text style={styles.scoreValue}>{score.toLocaleString()}</Text>
-                  <Text style={styles.stageText}>STAGE 2-6</Text>
-                  <Text style={styles.worldText}>WORLD 2: THE KINETIC CRYSTALS</Text>
+                  <Text style={styles.stageText}>STAGE 1-{currentWave}</Text>
+                  <Text style={styles.worldText}>WORLD 1 {"\u00B7"} NEURAL AWAKENING</Text>
                 </View>
 
+                {/* Bottom HUD */}
                 <View style={styles.bottomHUD}>
                   <View style={styles.hudCol}>
                     <Text style={styles.smallLabel}>COMBO</Text>
-                    <Text style={[styles.comboVal, { color: combo > 0 ? '#0ff' : '#444' }]}>{combo}</Text>
+                    <Text style={[styles.comboVal, { color: combo > 0 ? C.cyan : '#1a2a3a', textShadowColor: combo > 0 ? 'rgba(0,255,255,0.4)' : 'transparent', textShadowRadius: combo > 0 ? 8 : 0, textShadowOffset: { width: 0, height: 0 } }]}>{combo}</Text>
                   </View>
                   <View style={styles.hudCol}>
                     <Text style={styles.smallLabel}>PERFECT</Text>
                     <Text style={styles.perfectVal}>{perfectPercent}%</Text>
                   </View>
                 </View>
-                <Text style={styles.tapHint}>TAP ANYWHERE</Text>
+
+                {/* Tap hint */}
+                <Text style={[styles.tapHint, { opacity: 0.15 + pulseVal * 0.15 }]}>TAP ANYWHERE</Text>
               </>
             )}
 
-            {/* Menu */}
+            {/* ===== MENU SCREEN ===== */}
             {gameState === GameState.MENU && (
               <View style={styles.overlay}>
-                <View style={styles.titleGlow}>
-                  <Text style={styles.title}>ORBIT SYNC</Text>
-                </View>
-                <Text style={styles.subtitle}>WORLD 2: THE KINETIC CRYSTALS</Text>
-                <Text style={styles.tapStart}>TAP TO START</Text>
+                {/* Decorative top line */}
+                <View style={{ width: 120, height: 1, backgroundColor: 'rgba(0,255,255,0.3)', marginBottom: 20 }} />
+                <Text style={styles.titleSmall}>{"\u25C7"} RHYTHM REACTOR {"\u25C7"}</Text>
+                <Text style={[styles.title, Platform.OS === 'web' ? { textShadow: '0 0 30px rgba(0,255,255,0.5), 0 0 60px rgba(0,255,255,0.2)' } as any : { textShadowColor: 'rgba(0,255,255,0.5)', textShadowRadius: 20, textShadowOffset: { width: 0, height: 0 } }]}>ORBIT SYNC</Text>
+                {/* Decorative bottom line */}
+                <View style={{ width: 200, height: 1, backgroundColor: 'rgba(0,255,255,0.2)', marginTop: 12 }} />
+                <Text style={styles.subtitle}>WORLD 1 {"\u00B7"} NEURAL AWAKENING</Text>
+                <Text style={[styles.tapStart, { opacity: 0.5 + pulseVal * 0.5 }]}>TAP TO START</Text>
               </View>
             )}
 
-            {/* Game Over */}
+            {/* ===== GAME OVER ===== */}
             {gameState === GameState.GAME_OVER && !showReviveModal && (
               <View style={styles.darkOverlay}>
-                <Text style={styles.gameOverTitle}>GAME OVER</Text>
+                <View style={{ width: 80, height: 1, backgroundColor: 'rgba(255,68,68,0.4)', marginBottom: 16 }} />
+                <Text style={[styles.gameOverTitle, Platform.OS === 'web' ? { textShadow: '0 0 20px rgba(255,68,68,0.5)' } as any : { textShadowColor: 'rgba(255,68,68,0.5)', textShadowRadius: 15, textShadowOffset: { width: 0, height: 0 } }]}>GAME OVER</Text>
+                <View style={{ width: 140, height: 1, backgroundColor: 'rgba(255,68,68,0.2)', marginTop: 10, marginBottom: 30 }} />
                 <Text style={styles.finalScore}>Final Score: {score.toLocaleString()}</Text>
                 <Text style={styles.finalCoins}>Coins: {coins.toLocaleString()}</Text>
                 <Text style={styles.finalStreak}>Max Streak: x{maxStreak}</Text>
-                <Text style={styles.tapStart}>TAP TO RESTART</Text>
+                <Text style={[styles.tapStart, { opacity: 0.5 + pulseVal * 0.5 }]}>TAP TO RESTART</Text>
               </View>
             )}
 
-            {/* Victory */}
+            {/* ===== VICTORY ===== */}
             {gameState === GameState.VICTORY && !showDoubleCoinsModal && (
               <View style={styles.darkOverlay}>
-                <Text style={styles.victoryTitle}>VICTORY!</Text>
-                <Text style={styles.victoryBoss}>AETHELRED DEFEATED</Text>
+                <View style={{ width: 80, height: 1, backgroundColor: 'rgba(0,255,255,0.4)', marginBottom: 16 }} />
+                <Text style={[styles.victoryTitle, Platform.OS === 'web' ? { textShadow: '0 0 30px rgba(0,255,255,0.6)' } as any : { textShadowColor: 'rgba(0,255,255,0.5)', textShadowRadius: 20, textShadowOffset: { width: 0, height: 0 } }]}>VICTORY!</Text>
+                <Text style={styles.victoryBoss}>GRID SENTINEL DEFEATED</Text>
+                <View style={{ width: 140, height: 1, backgroundColor: 'rgba(0,255,255,0.2)', marginTop: 10, marginBottom: 30 }} />
                 <Text style={styles.finalScore}>Final Score: {score.toLocaleString()}</Text>
                 <Text style={styles.finalCoins}>Coins: {coins.toLocaleString()}</Text>
                 <Text style={styles.finalStreak}>Max Streak: x{maxStreak}</Text>
-                <Text style={styles.tapStart}>TAP TO PLAY AGAIN</Text>
+                <Text style={[styles.tapStart, { opacity: 0.5 + pulseVal * 0.5 }]}>TAP TO CONTINUE</Text>
               </View>
             )}
+
           </View>
         </GestureDetector>
 
-        {/* Revive Modal */}
+        {/* ===== REVIVE MODAL ===== */}
         <Modal visible={showReviveModal} transparent animationType="fade">
           <View style={styles.modalBg}>
             <View style={styles.modalBox}>
+              <View style={{ width: 60, height: 1, backgroundColor: 'rgba(255,0,255,0.4)', marginBottom: 16 }} />
               <Text style={styles.modalTitle}>CONTINUE?</Text>
-              <Text style={styles.modalSub}>You ran out of lives!</Text>
+              <Text style={styles.modalSub}>Signal lost. Systems failing.</Text>
               <View style={styles.statsRow}>
                 <View style={styles.statCol}>
-                  <Text style={styles.statLabel}>Score</Text>
+                  <Text style={styles.statLabel}>SCORE</Text>
                   <Text style={styles.statVal}>{score.toLocaleString()}</Text>
                 </View>
                 <View style={styles.statCol}>
-                  <Text style={styles.statLabel}>Coins</Text>
-                  <Text style={[styles.statVal, { color: '#ffd700' }]}>{coins}</Text>
+                  <Text style={styles.statLabel}>COINS</Text>
+                  <Text style={[styles.statVal, { color: C.gold }]}>{coins}</Text>
                 </View>
               </View>
-              <TouchableOpacity style={styles.reviveBtn} onPress={handleRevive}>
-                <Ionicons name="heart" size={22} color="#fff" />
+              <TouchableOpacity style={[styles.reviveBtn, Platform.OS === 'web' ? { boxShadow: '0 0 20px rgba(255,0,255,0.3)' } as any : {}]} onPress={handleRevive}>
+                <Ionicons name="heart" size={20} color="#fff" />
                 <Text style={styles.reviveTxt}>REVIVE</Text>
                 <Text style={styles.adTxt}>Watch Ad</Text>
               </TouchableOpacity>
@@ -696,24 +889,25 @@ export default function OrbitSyncGame() {
           </View>
         </Modal>
 
-        {/* Double Coins Modal */}
+        {/* ===== VICTORY MODAL ===== */}
         <Modal visible={showDoubleCoinsModal} transparent animationType="fade">
           <View style={styles.modalBg}>
             <View style={[styles.modalBox, styles.victoryBox]}>
-              <Text style={[styles.modalTitle, { color: '#0ff' }]}>VICTORY!</Text>
-              <Text style={styles.modalSub}>Aethelred has been defeated!</Text>
+              <View style={{ width: 60, height: 1, backgroundColor: 'rgba(0,255,255,0.4)', marginBottom: 16 }} />
+              <Text style={[styles.modalTitle, { color: C.cyan }]}>VICTORY!</Text>
+              <Text style={styles.modalSub}>Grid Sentinel has been neutralized.</Text>
               <View style={styles.statsRow}>
                 <View style={styles.statCol}>
-                  <Text style={styles.statLabel}>Final Score</Text>
+                  <Text style={styles.statLabel}>FINAL SCORE</Text>
                   <Text style={styles.statVal}>{score.toLocaleString()}</Text>
                 </View>
                 <View style={styles.statCol}>
-                  <Text style={styles.statLabel}>Coins Earned</Text>
-                  <Text style={[styles.statVal, { color: '#ffd700' }]}>{coins}</Text>
+                  <Text style={styles.statLabel}>COINS</Text>
+                  <Text style={[styles.statVal, { color: C.gold }]}>{coins}</Text>
                 </View>
               </View>
-              <TouchableOpacity style={styles.doubleBtn} onPress={handleDoubleCoins}>
-                <Ionicons name="sparkles" size={22} color="#000" />
+              <TouchableOpacity style={[styles.doubleBtn, Platform.OS === 'web' ? { boxShadow: '0 0 20px rgba(255,215,0,0.3)' } as any : {}]} onPress={handleDoubleCoins}>
+                <Ionicons name="sparkles" size={20} color="#000" />
                 <Text style={styles.doubleTxt}>DOUBLE COINS!</Text>
                 <Text style={styles.adTxtDark}>Watch Ad</Text>
               </TouchableOpacity>
@@ -728,369 +922,386 @@ export default function OrbitSyncGame() {
   );
 }
 
+// ============================================
+// STYLES - Premium Tron Aesthetic
+// ============================================
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#030308' },
-  gameArea: { flex: 1, backgroundColor: '#030308' },
-  
-  bgParticle: {
-    position: 'absolute',
-    backgroundColor: '#4af',
-    borderRadius: 4,
-  },
-  
-  bossContainer: {
-    position: 'absolute',
-    top: SCREEN_HEIGHT * 0.1,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    opacity: 0.1,
-  },
-  bossCrystal: {
-    width: 80,
-    height: 110,
-    borderWidth: 2,
-    borderColor: '#f0f',
-    transform: [{ rotate: '45deg' }],
-  },
-  
-  // Track styling - SOLID COLORS FOR MAX VISIBILITY
-  trackGlow: {
-    position: 'absolute',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#006688',
-    zIndex: 10,
-  },
-  trackMain: {
-    position: 'absolute',
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#00FFFF',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    zIndex: 11,
-  },
-  
-  // Corner nodes with glow
-  cornerGlow: {
-    position: 'absolute',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0, 255, 255, 0.25)',
-  },
-  cornerNode: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cornerDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#0ff',
-  },
-  
-  // Target styling
-  targetBase: {
-    position: 'absolute',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  
-  standardOuter: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    borderWidth: 4,
-    borderColor: '#0ff',
-    backgroundColor: 'rgba(0, 255, 255, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  standardInner: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#fff',
-  },
-  
-  cornerOuter: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    borderWidth: 5,
-    borderColor: '#0ff',
-    borderStyle: 'dashed',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 255, 255, 0.1)',
-  },
-  cornerInnerDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#fff',
-  },
-  
-  dualOuter: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    overflow: 'hidden',
-    flexDirection: 'row',
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  dualLeft: { flex: 1, backgroundColor: 'rgba(0, 255, 255, 0.9)' },
-  dualRight: { flex: 1, backgroundColor: 'rgba(255, 0, 255, 0.9)' },
-  dualSeam: {
-    position: 'absolute',
-    width: 4,
-    height: 54,
-    backgroundColor: '#fff',
-    left: 22,
-    top: -2,
-  },
-  dualCenter: {
-    position: 'absolute',
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#fff',
-    left: 17,
-    top: 17,
-  },
-  
-  fractureOuter: {
-    width: 48,
-    height: 48,
-    backgroundColor: '#fb4',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 6,
-    borderWidth: 3,
-    borderColor: '#ff0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  fractureCrack1: {
-    position: 'absolute',
-    width: 3,
-    height: 34,
-    backgroundColor: '#ff0',
-    transform: [{ rotate: '-45deg' }],
-  },
-  fractureCrack2: {
-    position: 'absolute',
-    width: 34,
-    height: 3,
-    backgroundColor: '#ff0',
-    transform: [{ rotate: '-45deg' }],
-  },
-  
-  shardOuter: {
-    backgroundColor: '#fc8',
-    borderWidth: 2,
-    borderColor: '#fff',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 3,
-  },
-  
-  // Player orb with layered glow
-  playerGlowOuter: {
-    position: 'absolute',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(0, 255, 255, 0.2)',
-  },
-  playerGlowInner: {
-    position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0, 255, 255, 0.4)',
-  },
-  playerCore: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#fff',
-  },
-  
-  // Hit effect ring
-  hitRing: {
-    position: 'absolute',
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 4,
-    opacity: 0.8,
-  },
+  container: { flex: 1, backgroundColor: '#000' },
+  gameArea: { flex: 1, backgroundColor: '#000' },
   
   flash: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
+    zIndex: 999,
   },
   
-  // HUD styling
+  // ===== HUD =====
   topHUD: {
     position: 'absolute',
-    top: 16,
-    left: 18,
-    right: 18,
+    top: 14,
+    left: 20,
+    right: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    zIndex: 100,
   },
   hudCol: { alignItems: 'center' },
-  labelGold: { fontSize: 11, fontWeight: 'bold', color: '#ffd700', marginBottom: 3 },
-  valueGold: { fontSize: 20, fontWeight: 'bold', color: '#ffd700' },
-  labelCyan: { fontSize: 11, fontWeight: 'bold', color: '#0ff', marginBottom: 3 },
-  labelMagenta: { fontSize: 11, fontWeight: 'bold', color: '#f0f', marginBottom: 3 },
-  valueWhite: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
-  livesRow: { flexDirection: 'row', gap: 5 },
-  heart: { fontSize: 20 },
+  labelGold: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.gold,
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  valueGold: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: C.gold,
+    letterSpacing: 1,
+  },
+  labelCyan: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.cyan,
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  labelMagenta: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.magenta,
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  valueWhite: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: C.white,
+    letterSpacing: 1,
+  },
+  livesRow: { flexDirection: 'row', gap: 6 },
   
+  // ===== Wave / Boss Bar =====
   waveBar: {
     position: 'absolute',
-    top: 65,
+    top: 68,
     left: 0,
     right: 0,
     alignItems: 'center',
+    zIndex: 100,
   },
-  waveText: { fontSize: 14, color: '#666', fontWeight: '700' },
-  bossName: { fontSize: 12, color: '#f0f', fontWeight: 'bold', marginBottom: 5 },
-  hpBar: {
-    width: '68%',
-    height: 12,
-    backgroundColor: '#222',
-    borderRadius: 6,
+  waveText: {
+    fontSize: 12,
+    color: '#445566',
+    fontWeight: '700',
+    letterSpacing: 3,
+  },
+  bossName: {
+    fontSize: 11,
+    color: C.magenta,
+    fontWeight: '800',
+    letterSpacing: 3,
+    marginBottom: 6,
+  },
+  hpBarOuter: {
+    width: '65%',
+    height: 10,
+    backgroundColor: 'rgba(255, 0, 255, 0.08)',
+    borderRadius: 5,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#fff',
+    borderColor: 'rgba(255, 0, 255, 0.4)',
   },
-  hpFill: { height: '100%', backgroundColor: '#f0f', borderRadius: 6 },
-  bossPhase: { fontSize: 10, color: '#888', marginTop: 5 },
+  hpFill: {
+    height: '100%',
+    backgroundColor: C.magenta,
+    borderRadius: 5,
+  },
+  hpShine: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '40%',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderTopLeftRadius: 5,
+    borderTopRightRadius: 5,
+  },
+  bossPhase: {
+    fontSize: 9,
+    color: 'rgba(255, 0, 255, 0.5)',
+    fontWeight: '700',
+    letterSpacing: 4,
+    marginTop: 5,
+  },
   
+  // ===== Score Box =====
   scoreBox: {
     position: 'absolute',
     top: '50%',
     left: 0,
     right: 0,
-    marginTop: -50,
+    marginTop: -52,
     alignItems: 'center',
+    zIndex: 50,
   },
-  scoreLabel: { fontSize: 14, color: '#555', fontWeight: '700' },
-  scoreValue: { fontSize: 44, color: '#fff', fontWeight: 'bold' },
-  stageText: { fontSize: 12, color: '#444', marginTop: 4 },
-  worldText: { fontSize: 10, color: '#333', marginTop: 3 },
+  scoreLabel: {
+    fontSize: 11,
+    color: '#334455',
+    fontWeight: '700',
+    letterSpacing: 4,
+  },
+  scoreValue: {
+    fontSize: 46,
+    color: C.white,
+    fontWeight: '800',
+    letterSpacing: 2,
+  },
+  stageText: {
+    fontSize: 11,
+    color: '#334455',
+    fontWeight: '600',
+    letterSpacing: 3,
+    marginTop: 4,
+  },
+  worldText: {
+    fontSize: 9,
+    color: '#223344',
+    fontWeight: '600',
+    letterSpacing: 2,
+    marginTop: 3,
+  },
   
+  // ===== Bottom HUD =====
   bottomHUD: {
     position: 'absolute',
-    bottom: 60,
-    left: 35,
-    right: 35,
+    bottom: 58,
+    left: 30,
+    right: 30,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    zIndex: 100,
   },
-  smallLabel: { fontSize: 11, color: '#555', marginBottom: 3 },
-  comboVal: { fontSize: 22, fontWeight: 'bold' },
-  perfectVal: { fontSize: 22, fontWeight: 'bold', color: '#f0f' },
+  smallLabel: {
+    fontSize: 10,
+    color: '#445566',
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  comboVal: {
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  perfectVal: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: C.magenta,
+    letterSpacing: 1,
+  },
   tapHint: {
     position: 'absolute',
-    bottom: 32,
+    bottom: 30,
     left: 0,
     right: 0,
     textAlign: 'center',
-    fontSize: 12,
-    color: '#333',
+    fontSize: 10,
+    color: '#334455',
+    fontWeight: '600',
+    letterSpacing: 4,
   },
   
-  // Overlays
+  // ===== Overlays =====
   overlay: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    zIndex: 200,
   },
   darkOverlay: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    backgroundColor: 'rgba(0, 0, 0, 0.88)',
+    zIndex: 200,
   },
-  titleGlow: {
-    padding: 10,
+  titleSmall: {
+    fontSize: 11,
+    color: 'rgba(0, 255, 255, 0.5)',
+    fontWeight: '600',
+    letterSpacing: 5,
+    marginBottom: 8,
   },
-  title: { fontSize: 42, fontWeight: 'bold', color: '#fff' },
-  subtitle: { fontSize: 15, color: '#0ff', marginTop: 12 },
-  tapStart: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginTop: 65, opacity: 0.85 },
-  gameOverTitle: { fontSize: 38, fontWeight: 'bold', color: '#f44' },
-  victoryTitle: { fontSize: 42, fontWeight: 'bold', color: '#0ff' },
-  victoryBoss: { fontSize: 16, color: '#f0f', marginTop: 12 },
-  finalScore: { fontSize: 18, color: '#fff', marginTop: 25 },
-  finalCoins: { fontSize: 16, color: '#ffd700', marginTop: 12 },
-  finalStreak: { fontSize: 16, color: '#fff', marginTop: 12 },
+  title: {
+    fontSize: 48,
+    fontWeight: '900',
+    color: C.white,
+    letterSpacing: 6,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: C.cyan,
+    fontWeight: '600',
+    letterSpacing: 3,
+    marginTop: 20,
+  },
+  tapStart: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: C.white,
+    letterSpacing: 4,
+    marginTop: 50,
+  },
+  gameOverTitle: {
+    fontSize: 40,
+    fontWeight: '900',
+    color: C.red,
+    letterSpacing: 4,
+  },
+  victoryTitle: {
+    fontSize: 44,
+    fontWeight: '900',
+    color: C.cyan,
+    letterSpacing: 4,
+  },
+  victoryBoss: {
+    fontSize: 13,
+    color: C.magenta,
+    fontWeight: '700',
+    letterSpacing: 3,
+    marginTop: 10,
+  },
+  finalScore: {
+    fontSize: 18,
+    color: C.white,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  finalCoins: {
+    fontSize: 16,
+    color: C.gold,
+    fontWeight: '600',
+    letterSpacing: 1,
+    marginTop: 10,
+  },
+  finalStreak: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: '600',
+    letterSpacing: 1,
+    marginTop: 8,
+  },
   
-  // Modals
+  // ===== Modals =====
   modalBg: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   modalBox: {
-    backgroundColor: '#0a0a0a',
-    borderRadius: 24,
+    backgroundColor: '#060610',
+    borderRadius: 20,
     padding: 32,
     width: '92%',
     maxWidth: 340,
     alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#f44',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 0, 255, 0.3)',
   },
-  victoryBox: { borderColor: '#0ff' },
-  modalTitle: { fontSize: 30, fontWeight: 'bold', color: '#f44', marginBottom: 10 },
-  modalSub: { fontSize: 15, color: '#777', marginBottom: 26 },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginBottom: 28 },
+  victoryBox: {
+    borderColor: 'rgba(0, 255, 255, 0.3)',
+  },
+  modalTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: C.magenta,
+    letterSpacing: 3,
+    marginBottom: 8,
+  },
+  modalSub: {
+    fontSize: 13,
+    color: '#556677',
+    fontWeight: '500',
+    letterSpacing: 1,
+    marginBottom: 26,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginBottom: 28,
+  },
   statCol: { alignItems: 'center' },
-  statLabel: { fontSize: 11, color: '#555', marginBottom: 5, textTransform: 'uppercase' },
-  statVal: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
+  statLabel: {
+    fontSize: 9,
+    color: '#556677',
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginBottom: 6,
+  },
+  statVal: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: C.white,
+    letterSpacing: 1,
+  },
   reviveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f0f',
-    paddingVertical: 16,
-    paddingHorizontal: 34,
-    borderRadius: 30,
-    marginBottom: 16,
-    gap: 12,
+    backgroundColor: C.magenta,
+    paddingVertical: 15,
+    paddingHorizontal: 30,
+    borderRadius: 28,
+    marginBottom: 14,
+    gap: 10,
   },
-  reviveTxt: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
-  adTxt: { fontSize: 12, color: 'rgba(255,255,255,0.75)', marginLeft: 6 },
+  reviveTxt: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: C.white,
+    letterSpacing: 2,
+  },
+  adTxt: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
   doubleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffd700',
-    paddingVertical: 16,
-    paddingHorizontal: 30,
-    borderRadius: 30,
-    marginBottom: 16,
-    gap: 10,
+    backgroundColor: C.gold,
+    paddingVertical: 15,
+    paddingHorizontal: 28,
+    borderRadius: 28,
+    marginBottom: 14,
+    gap: 8,
   },
-  doubleTxt: { fontSize: 18, fontWeight: 'bold', color: '#000' },
-  adTxtDark: { fontSize: 11, color: 'rgba(0,0,0,0.65)' },
-  skipBtn: { paddingVertical: 14, paddingHorizontal: 30 },
-  skipTxt: { fontSize: 14, color: '#555' },
+  doubleTxt: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#000',
+    letterSpacing: 2,
+  },
+  adTxtDark: {
+    fontSize: 10,
+    color: 'rgba(0,0,0,0.5)',
+    fontWeight: '500',
+  },
+  skipBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 30,
+  },
+  skipTxt: {
+    fontSize: 13,
+    color: '#445566',
+    fontWeight: '500',
+    letterSpacing: 1,
+  },
 });
